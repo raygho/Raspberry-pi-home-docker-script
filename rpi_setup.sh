@@ -59,6 +59,9 @@ create_developer_structure() {
     return 0
 }
 
+# Create directory structure at script start
+create_developer_structure
+
 # --- Docker Compose Management ---
 init_docker_compose() {
     if [ ! -f "$COMPOSE_FILE" ]; then
@@ -325,8 +328,14 @@ install_docker() {
     echo -e "${YELLOW}>>> Running Docker installation script...${NC}"
     sudo sh get-docker.sh
     
-    echo -e "${YELLOW}>>> Adding current user to the 'docker' group...${NC}"
-    sudo usermod -aG docker $USER
+    # Check if user is already in docker group
+    if groups $USER | grep -q '\bdocker\b'; then
+        echo -e "${GREEN}>>> User '$USER' is already in the docker group.${NC}"
+    else
+        echo -e "${YELLOW}>>> Adding current user '$USER' to the 'docker' group...${NC}"
+        sudo usermod -aG docker $USER
+        echo -e "${GREEN}>>> User added to docker group successfully.${NC}"
+    fi
     
     echo -e "${YELLOW}>>> Enabling and starting Docker service...${NC}"
     sudo systemctl enable docker
@@ -350,12 +359,13 @@ install_mongodb() {
         return 1
     fi
     
-    if docker ps -a --format '{{.Names}}' | grep -q "^mongodb$"; then
-        echo -e "\n${YELLOW}>>> MongoDB container is already set up.${NC}"
-        return 0
-    fi
+    echo -e "\n${GREEN}>>> Pulling MongoDB image and adding to docker-compose...${NC}"
     
-    echo -e "\n${GREEN}>>> Setting up MongoDB with docker-compose...${NC}"
+    # Pull MongoDB image
+    if ! docker pull mongo:latest; then
+        echo -e "\n${RED}>>> Failed to pull MongoDB image.${NC}"
+        return 1
+    fi
     
     # Add MongoDB service to docker-compose
     local mongodb_service='
@@ -390,21 +400,13 @@ Connection URL: mongodb://localhost:27017
 Database: admin
 Volume Path: $VOLUMES_DIR/mongodb
 Backup Path: $VOLUMES_DIR/mongodb
-Status: Running"
+Status: Configured (not started)"
     
     add_service_config "MongoDB" "$mongodb_config"
     
-    # Start the service
-    cd "$CONFIGS_DIR"
-    if docker-compose up -d mongodb; then
-        echo -e "\n${GREEN}>>> MongoDB started successfully via docker-compose.${NC}"
-        echo -e ">>> Connect to it on 'mongodb://localhost:27017'"
-        echo -e ">>> Data stored in: $VOLUMES_DIR/mongodb"
-        return 0
-    else
-        echo -e "\n${RED}>>> Failed to start MongoDB container.${NC}"
-        return 1
-    fi
+    echo -e "\n${GREEN}>>> MongoDB image pulled and added to docker-compose.${NC}"
+    echo -e ">>> Run 'docker-compose up -d mongodb' in $CONFIGS_DIR to start"
+    return 0
 }
 
 # 8. Install MySQL on Docker
@@ -414,26 +416,16 @@ install_mysql() {
         return 1
     fi
     
-    if docker ps -a --format '{{.Names}}' | grep -q "^mysql-db$"; then
-        echo -e "\n${YELLOW}>>> MySQL container is already set up.${NC}"
-        return 0
+    echo -e "\n${GREEN}>>> Pulling MySQL image and adding to docker-compose...${NC}"
+    
+    # Pull MySQL image
+    if ! docker pull mysql:latest; then
+        echo -e "\n${RED}>>> Failed to pull MySQL image.${NC}"
+        return 1
     fi
     
-    echo -e "\n${GREEN}>>> Setting up MySQL with docker-compose...${NC}"
-    
-    # Prompt for password
-    local MYSQL_ROOT_PASSWORD
-    while true; do
-        read -s -p "Enter a root password for MySQL: " MYSQL_ROOT_PASSWORD
-        echo
-        read -s -p "Confirm password: " MYSQL_ROOT_PASSWORD_CONFIRM
-        echo
-        if [ "$MYSQL_ROOT_PASSWORD" = "$MYSQL_ROOT_PASSWORD_CONFIRM" ] && [ -n "$MYSQL_ROOT_PASSWORD" ]; then
-            break
-        else
-            echo -e "${RED}Passwords do not match or are empty. Please try again.${NC}"
-        fi
-    done
+    # Use default password
+    local MYSQL_ROOT_PASSWORD="defaultpassword"
     
     # Add MySQL service to docker-compose
     local mysql_service="
@@ -471,21 +463,14 @@ Password: $MYSQL_ROOT_PASSWORD
 Default Database: development
 Volume Path: $VOLUMES_DIR/mysqldb
 Backup Path: $VOLUMES_DIR/mysqldb
-Status: Running"
+Status: Configured (not started)"
     
     add_service_config "MySQL" "$mysql_config"
     
-    # Start the service
-    cd "$CONFIGS_DIR"
-    if docker-compose up -d mysql-db; then
-        echo -e "\n${GREEN}>>> MySQL started successfully via docker-compose.${NC}"
-        echo -e ">>> Connect to it on host 'localhost', port '3306', user 'root'"
-        echo -e ">>> Data stored in: $VOLUMES_DIR/mysqldb"
-        return 0
-    else
-        echo -e "\n${RED}>>> Failed to start MySQL container.${NC}"
-        return 1
-    fi
+    echo -e "\n${GREEN}>>> MySQL image pulled and added to docker-compose.${NC}"
+    echo -e ">>> Default password: $MYSQL_ROOT_PASSWORD (change after deployment)"
+    echo -e ">>> Run 'docker-compose up -d mysql-db' in $CONFIGS_DIR to start"
+    return 0
 }
 
 # 9. Install SQLite Tools
@@ -538,12 +523,13 @@ install_influxdb() {
         return 1
     fi
     
-    if docker ps -a --format '{{.Names}}' | grep -q "^influxdb$"; then
-        echo -e "\n${YELLOW}>>> InfluxDB container is already set up.${NC}"
-        return 0
-    fi
+    echo -e "\n${GREEN}>>> Pulling InfluxDB image and adding to docker-compose...${NC}"
     
-    echo -e "\n${GREEN}>>> Setting up InfluxDB with docker-compose...${NC}"
+    # Pull InfluxDB image
+    if ! docker pull influxdb:2.7; then
+        echo -e "\n${RED}>>> Failed to pull InfluxDB image.${NC}"
+        return 1
+    fi
     
     local influxdb_service='
   influxdb:
@@ -582,21 +568,14 @@ Organization: myorg
 Bucket: mybucket
 Volume Path: $VOLUMES_DIR/influxdb
 Backup Path: $VOLUMES_DIR/influxdb
-Status: Running"
+Status: Configured (not started)"
     
     add_service_config "InfluxDB" "$influxdb_config"
     
-    cd "$CONFIGS_DIR"
-    if docker-compose up -d influxdb; then
-        echo -e "\n${GREEN}>>> InfluxDB started successfully via docker-compose.${NC}"
-        echo -e ">>> Access web UI at: http://localhost:8086"
-        echo -e ">>> Default login: admin/password123"
-        echo -e ">>> Data stored in: $VOLUMES_DIR/influxdb"
-        return 0
-    else
-        echo -e "\n${RED}>>> Failed to start InfluxDB container.${NC}"
-        return 1
-    fi
+    echo -e "\n${GREEN}>>> InfluxDB image pulled and added to docker-compose.${NC}"
+    echo -e ">>> Default login: admin/password123"
+    echo -e ">>> Run 'docker-compose up -d influxdb' in $CONFIGS_DIR to start"
+    return 0
 }
 
 # 11. Install Portainer on Docker
@@ -606,12 +585,13 @@ install_portainer() {
         return 1
     fi
     
-    if docker ps -a --format '{{.Names}}' | grep -q "^portainer$"; then
-        echo -e "\n${YELLOW}>>> Portainer container is already set up.${NC}"
-        return 0
-    fi
+    echo -e "\n${GREEN}>>> Pulling Portainer image and adding to docker-compose...${NC}"
     
-    echo -e "\n${GREEN}>>> Setting up Portainer with docker-compose...${NC}"
+    # Pull Portainer image
+    if ! docker pull portainer/portainer-ce:latest; then
+        echo -e "\n${RED}>>> Failed to pull Portainer image.${NC}"
+        return 1
+    fi
     
     local portainer_service='
   portainer:
@@ -644,20 +624,13 @@ Alternative URL: http://localhost:9000
 Initial Setup: Create admin user on first access
 Volume Path: $VOLUMES_DIR/portainer
 Backup Path: $VOLUMES_DIR/portainer
-Status: Running"
+Status: Configured (not started)"
     
     add_service_config "Portainer" "$portainer_config"
     
-    cd "$CONFIGS_DIR"
-    if docker-compose up -d portainer; then
-        echo -e "\n${GREEN}>>> Portainer started successfully via docker-compose.${NC}"
-        echo -e ">>> Access web UI at: https://localhost:9443"
-        echo -e ">>> Data stored in: $VOLUMES_DIR/portainer"
-        return 0
-    else
-        echo -e "\n${RED}>>> Failed to start Portainer container.${NC}"
-        return 1
-    fi
+    echo -e "\n${GREEN}>>> Portainer image pulled and added to docker-compose.${NC}"
+    echo -e ">>> Run 'docker-compose up -d portainer' in $CONFIGS_DIR to start"
+    return 0
 }
 
 # 12. Install Traefik on Docker
@@ -667,12 +640,13 @@ install_traefik() {
         return 1
     fi
     
-    if docker ps -a --format '{{.Names}}' | grep -q "^traefik$"; then
-        echo -e "\n${YELLOW}>>> Traefik container is already set up.${NC}"
-        return 0
-    fi
+    echo -e "\n${GREEN}>>> Pulling Traefik image and adding to docker-compose...${NC}"
     
-    echo -e "\n${GREEN}>>> Setting up Traefik with docker-compose...${NC}"
+    # Pull Traefik image
+    if ! docker pull traefik:v3.0; then
+        echo -e "\n${RED}>>> Failed to pull Traefik image.${NC}"
+        return 1
+    fi
     
     # Create traefik config directory
     mkdir -p "$VOLUMES_DIR/traefik"
@@ -725,21 +699,15 @@ Dashboard URL: http://localhost:8080
 Configuration File: $VOLUMES_DIR/traefik/traefik.yml
 Volume Path: $VOLUMES_DIR/traefik
 Backup Path: $VOLUMES_DIR/traefik
-Status: Running
+Status: Configured (not started)
 Notes: Manages routing for other services"
     
     add_service_config "Traefik" "$traefik_config"
     
-    cd "$CONFIGS_DIR"
-    if docker-compose up -d traefik; then
-        echo -e "\n${GREEN}>>> Traefik started successfully via docker-compose.${NC}"
-        echo -e ">>> Access dashboard at: http://localhost:8080"
-        echo -e ">>> Config stored in: $VOLUMES_DIR/traefik"
-        return 0
-    else
-        echo -e "\n${RED}>>> Failed to start Traefik container.${NC}"
-        return 1
-    fi
+    echo -e "\n${GREEN}>>> Traefik image pulled and added to docker-compose.${NC}"
+    echo -e ">>> Dashboard URL: http://localhost:8080"
+    echo -e ">>> Run 'docker-compose up -d traefik' in $CONFIGS_DIR to start"
+    return 0
 }
 
 # 13. Install Grafana on Docker
@@ -749,12 +717,13 @@ install_grafana() {
         return 1
     fi
     
-    if docker ps -a --format '{{.Names}}' | grep -q "^grafana$"; then
-        echo -e "\n${YELLOW}>>> Grafana container is already set up.${NC}"
-        return 0
-    fi
+    echo -e "\n${GREEN}>>> Pulling Grafana image and adding to docker-compose...${NC}"
     
-    echo -e "\n${GREEN}>>> Setting up Grafana with docker-compose...${NC}"
+    # Pull Grafana image
+    if ! docker pull grafana/grafana:latest; then
+        echo -e "\n${RED}>>> Failed to pull Grafana image.${NC}"
+        return 1
+    fi
     
     local grafana_service='
   grafana:
@@ -787,22 +756,15 @@ Username: admin
 Password: admin123
 Volume Path: $VOLUMES_DIR/grafana
 Backup Path: $VOLUMES_DIR/grafana
-Status: Running
+Status: Configured (not started)
 Notes: Change default password on first login"
     
     add_service_config "Grafana" "$grafana_config"
     
-    cd "$CONFIGS_DIR"
-    if docker-compose up -d grafana; then
-        echo -e "\n${GREEN}>>> Grafana started successfully via docker-compose.${NC}"
-        echo -e ">>> Access web UI at: http://localhost:3000"
-        echo -e ">>> Default login: admin/admin123"
-        echo -e ">>> Data stored in: $VOLUMES_DIR/grafana"
-        return 0
-    else
-        echo -e "\n${RED}>>> Failed to start Grafana container.${NC}"
-        return 1
-    fi
+    echo -e "\n${GREEN}>>> Grafana image pulled and added to docker-compose.${NC}"
+    echo -e ">>> Default login: admin/admin123"
+    echo -e ">>> Run 'docker-compose up -d grafana' in $CONFIGS_DIR to start"
+    return 0
 }
 
 
@@ -906,6 +868,9 @@ show_menu() {
     printf "   12. Install Grafana (Docker)      [%b]\n" "$s12"
     printf "   13. Configure UFW Firewall        [%b]\n" "$s13"
     echo ""
+    echo "Batch Installation:"
+    echo "   a. Install ALL (Complete setup - runs options 1-13)"
+    echo ""
     echo "Selective Installation:"
     echo "   s. Select multiple (e.g., '1,2,5,6,13')"
     echo ""
@@ -920,25 +885,81 @@ show_menu() {
 }
 
 
+# --- Helper Functions ---
+show_installation_header() {
+    local task_name="$1"
+    echo -e "${BLUE}======================================${NC}"
+    echo -e "${BLUE}  Installing: $task_name${NC}"
+    echo -e "${BLUE}======================================${NC}"
+    echo ""
+}
+
+install_all() {
+    clear
+    echo -e "${GREEN}======================================${NC}"
+    echo -e "${GREEN}  COMPLETE RASPBERRY PI SETUP${NC}"
+    echo -e "${GREEN}======================================${NC}"
+    echo -e "${YELLOW}This will install ALL components in sequence.${NC}"
+    echo -e "${YELLOW}Estimated time: 15-30 minutes${NC}"
+    echo ""
+    read -p "Continue with complete installation? (y/N): " confirm
+    
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo -e "${YELLOW}Installation cancelled.${NC}"
+        return 0
+    fi
+    
+    echo -e "\n${GREEN}Starting complete installation...${NC}\n"
+    
+    # Run all installations in sequence
+    clear; show_installation_header "System Update"; update_system
+    clear; show_installation_header "Python Installation"; install_python
+    clear; show_installation_header "Screen Installation"; install_screen
+    clear; show_installation_header "Git Installation"; install_git
+    clear; show_installation_header "Docker Installation"; install_docker
+    clear; show_installation_header "MongoDB Installation"; install_mongodb
+    clear; show_installation_header "MySQL Installation"; install_mysql
+    clear; show_installation_header "SQLite Installation"; install_sqlite_docker
+    clear; show_installation_header "InfluxDB Installation"; install_influxdb
+    clear; show_installation_header "Portainer Installation"; install_portainer
+    clear; show_installation_header "Traefik Installation"; install_traefik
+    clear; show_installation_header "Grafana Installation"; install_grafana
+    clear; show_installation_header "UFW Firewall Configuration"; install_ufw
+    
+    clear
+    echo -e "${GREEN}======================================${NC}"
+    echo -e "${GREEN}  INSTALLATION COMPLETE!${NC}"
+    echo -e "${GREEN}======================================${NC}"
+    echo -e "${GREEN}All components have been installed successfully.${NC}"
+    echo -e "${YELLOW}Docker containers are configured but not started.${NC}"
+    echo -e "${YELLOW}Use docker-compose commands to start services as needed.${NC}"
+    echo ""
+    echo -e "Docker Compose File: ${BLUE}$COMPOSE_FILE${NC}"
+    echo -e "Configuration File:  ${BLUE}$CONFIG_FILE${NC}"
+    echo -e "Volume Directory:    ${BLUE}$VOLUMES_DIR${NC}"
+    echo ""
+}
+
 # --- Main Loop ---
 while true; do
     show_menu
-    read -p "Enter your choice [1-13, s, q]: " choice
+    read -p "Enter your choice [1-13, a, s, q]: " choice
 
     case $choice in
-        1) update_system ;;
-        2) install_python ;;
-        3) install_screen ;;
-        4) install_git ;;
-        5) install_docker ;;
-        6) install_mongodb ;;
-        7) install_mysql ;;
-        8) install_sqlite_docker ;;
-        9) install_influxdb ;;
-        10) install_portainer ;;
-        11) install_traefik ;;
-        12) install_grafana ;;
-        13) install_ufw ;;
+        1) clear; show_installation_header "System Update"; update_system ;;
+        2) clear; show_installation_header "Python Installation"; install_python ;;
+        3) clear; show_installation_header "Screen Installation"; install_screen ;;
+        4) clear; show_installation_header "Git Installation"; install_git ;;
+        5) clear; show_installation_header "Docker Installation"; install_docker ;;
+        6) clear; show_installation_header "MongoDB Installation"; install_mongodb ;;
+        7) clear; show_installation_header "MySQL Installation"; install_mysql ;;
+        8) clear; show_installation_header "SQLite Installation"; install_sqlite_docker ;;
+        9) clear; show_installation_header "InfluxDB Installation"; install_influxdb ;;
+        10) clear; show_installation_header "Portainer Installation"; install_portainer ;;
+        11) clear; show_installation_header "Traefik Installation"; install_traefik ;;
+        12) clear; show_installation_header "Grafana Installation"; install_grafana ;;
+        13) clear; show_installation_header "UFW Firewall Configuration"; install_ufw ;;
+        a|A) install_all ;;
         s|S)
             echo -e "\n${YELLOW}Enter the numbers separated by commas (e.g., 1,2,5,6,13):${NC}"
             read -p "Selection: " selection
