@@ -76,22 +76,351 @@ create_developer_structure() {
 # Create directory structure at script start
 create_developer_structure
 
-# Initialize docker-compose and config files immediately after directory creation
-init_docker_compose
-init_config_file
+# --- Docker Image Detection & Auto-Configuration ---
+detect_and_configure_existing_images() {
+    echo -e "\n${YELLOW}>>> Scanning for existing Docker images...${NC}"
+    
+    if ! command -v docker &>/dev/null; then
+        echo -e "${YELLOW}>>> Docker not installed, skipping image detection${NC}"
+        return 0
+    fi
+    
+    # Initialize files first
+    init_docker_compose
+    init_config_file
+    
+    local images_found=false
+    
+    # Check for MongoDB
+    if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "mongo:latest"; then
+        echo -e "${GREEN}>>> Found MongoDB image, adding to compose...${NC}"
+        if ! grep -q "mongodb:" "$COMPOSE_FILE"; then
+            add_mongodb_to_compose
+            add_mongodb_config
+            images_found=true
+        fi
+    fi
+    
+    # Check for MySQL
+    if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "mysql:latest"; then
+        echo -e "${GREEN}>>> Found MySQL image, adding to compose...${NC}"
+        if ! grep -q "mysql-db:" "$COMPOSE_FILE"; then
+            add_mysql_to_compose
+            add_mysql_config
+            images_found=true
+        fi
+    fi
+    
+    # Check for InfluxDB
+    if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "influxdb:2.7"; then
+        echo -e "${GREEN}>>> Found InfluxDB image, adding to compose...${NC}"
+        if ! grep -q "influxdb:" "$COMPOSE_FILE"; then
+            add_influxdb_to_compose
+            add_influxdb_config
+            images_found=true
+        fi
+    fi
+    
+    # Check for Portainer
+    if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "portainer/portainer-ce:latest"; then
+        echo -e "${GREEN}>>> Found Portainer image, adding to compose...${NC}"
+        if ! grep -q "portainer:" "$COMPOSE_FILE"; then
+            add_portainer_to_compose
+            add_portainer_config
+            images_found=true
+        fi
+    fi
+    
+    # Check for Traefik
+    if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "traefik:v3.0"; then
+        echo -e "${GREEN}>>> Found Traefik image, adding to compose...${NC}"
+        if ! grep -q "traefik:" "$COMPOSE_FILE"; then
+            add_traefik_to_compose
+            add_traefik_config
+            images_found=true
+        fi
+    fi
+    
+    # Check for Grafana
+    if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "grafana/grafana:latest"; then
+        echo -e "${GREEN}>>> Found Grafana image, adding to compose...${NC}"
+        if ! grep -q "grafana:" "$COMPOSE_FILE"; then
+            add_grafana_to_compose
+            add_grafana_config
+            images_found=true
+        fi
+    fi
+    
+    if [ "$images_found" = true ]; then
+        echo -e "${GREEN}>>> Auto-configuration complete! Found images added to docker-compose.yml${NC}"
+        echo -e "${BLUE}>>> Docker Compose: $COMPOSE_FILE${NC}"
+        echo -e "${BLUE}>>> Config Details: $CONFIG_FILE${NC}"
+    else
+        echo -e "${YELLOW}>>> No existing Docker images found to configure${NC}"
+    fi
+}
 
-# Debug: Verify files were created
-if [ -f "$COMPOSE_FILE" ]; then
-    echo -e "${GREEN}>>> SUCCESS: docker-compose.yml created at $COMPOSE_FILE${NC}"
-else
-    echo -e "${RED}>>> ERROR: Failed to create docker-compose.yml at $COMPOSE_FILE${NC}"
-fi
+# --- Individual Service Configuration Functions ---
+add_mongodb_to_compose() {
+    local mongodb_service='
+  mongodb:
+    image: mongo:latest
+    container_name: mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - ../volumes/mongodb:/backup
+    networks:
+      - rpi_network
+    environment:
+      - MONGO_INITDB_DATABASE=admin'
+    
+    sed -i '/^services:/a\'"$mongodb_service" "$COMPOSE_FILE"
+    
+    if ! grep -q "mongodb_data:" "$COMPOSE_FILE"; then
+        sed -i '/^volumes:/a\  mongodb_data:' "$COMPOSE_FILE"
+    fi
+}
 
-if [ -f "$CONFIG_FILE" ]; then
-    echo -e "${GREEN}>>> SUCCESS: Config file created at $CONFIG_FILE${NC}"
-else
-    echo -e "${RED}>>> ERROR: Failed to create config file at $CONFIG_FILE${NC}"
-fi
+add_mongodb_config() {
+    local mongodb_config="Service: MongoDB
+Image: mongo:latest
+Container Name: mongodb
+Port: 27017
+Connection URL: mongodb://localhost:27017
+Database: admin
+Volume Path: $VOLUMES_DIR/mongodb
+Backup Path: $VOLUMES_DIR/mongodb
+Status: Image Available (not started)"
+    
+    add_service_config "MongoDB" "$mongodb_config"
+}
+
+add_mysql_to_compose() {
+    local MYSQL_ROOT_PASSWORD="defaultpassword"
+    local mysql_service="
+  mysql-db:
+    image: mysql:latest
+    container_name: mysql-db
+    restart: unless-stopped
+    ports:
+      - \"3306:3306\"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ../volumes/mysqldb:/backup
+    networks:
+      - rpi_network
+    environment:
+      - MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD
+      - MYSQL_DATABASE=development"
+    
+    sed -i '/^services:/a\'"$mysql_service" "$COMPOSE_FILE"
+    
+    if ! grep -q "mysql_data:" "$COMPOSE_FILE"; then
+        sed -i '/^volumes:/a\  mysql_data:' "$COMPOSE_FILE"
+    fi
+}
+
+add_mysql_config() {
+    local MYSQL_ROOT_PASSWORD="defaultpassword"
+    local mysql_config="Service: MySQL Database
+Image: mysql:latest
+Container Name: mysql-db
+Port: 3306
+Connection URL: mysql://localhost:3306
+Username: root
+Password: $MYSQL_ROOT_PASSWORD
+Default Database: development
+Volume Path: $VOLUMES_DIR/mysqldb
+Backup Path: $VOLUMES_DIR/mysqldb
+Status: Image Available (not started)"
+    
+    add_service_config "MySQL" "$mysql_config"
+}
+
+add_influxdb_to_compose() {
+    local influxdb_service='
+  influxdb:
+    image: influxdb:2.7
+    container_name: influxdb
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+      - ../volumes/influxdb:/backup
+    networks:
+      - rpi_network
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=password123
+      - DOCKER_INFLUXDB_INIT_ORG=myorg
+      - DOCKER_INFLUXDB_INIT_BUCKET=mybucket'
+    
+    sed -i '/^services:/a\'"$influxdb_service" "$COMPOSE_FILE"
+    
+    if ! grep -q "influxdb_data:" "$COMPOSE_FILE"; then
+        sed -i '/^volumes:/a\  influxdb_data:' "$COMPOSE_FILE"
+    fi
+}
+
+add_influxdb_config() {
+    local influxdb_config="Service: InfluxDB Time Series Database
+Image: influxdb:2.7
+Container Name: influxdb
+Port: 8086
+Web UI URL: http://localhost:8086
+Username: admin
+Password: password123
+Organization: myorg
+Bucket: mybucket
+Volume Path: $VOLUMES_DIR/influxdb
+Backup Path: $VOLUMES_DIR/influxdb
+Status: Image Available (not started)"
+    
+    add_service_config "InfluxDB" "$influxdb_config"
+}
+
+add_portainer_to_compose() {
+    local portainer_service='
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9443:9443"
+    volumes:
+      - portainer_data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ../volumes/portainer:/backup
+    networks:
+      - rpi_network'
+    
+    sed -i '/^services:/a\'"$portainer_service" "$COMPOSE_FILE"
+    
+    if ! grep -q "portainer_data:" "$COMPOSE_FILE"; then
+        sed -i '/^volumes:/a\  portainer_data:' "$COMPOSE_FILE"
+    fi
+}
+
+add_portainer_config() {
+    local portainer_config="Service: Portainer Docker Management
+Image: portainer/portainer-ce:latest
+Container Name: portainer
+Ports: 9000 (HTTP), 9443 (HTTPS)
+Web UI URL: https://localhost:9443
+Alternative URL: http://localhost:9000
+Initial Setup: Create admin user on first access
+Volume Path: $VOLUMES_DIR/portainer
+Backup Path: $VOLUMES_DIR/portainer
+Status: Image Available (not started)"
+    
+    add_service_config "Portainer" "$portainer_config"
+}
+
+add_traefik_to_compose() {
+    # Create traefik config directory
+    mkdir -p "$VOLUMES_DIR/traefik"
+    
+    # Create basic traefik config if it doesn't exist
+    if [ ! -f "$VOLUMES_DIR/traefik/traefik.yml" ]; then
+        cat > "$VOLUMES_DIR/traefik/traefik.yml" << 'EOF'
+api:
+  dashboard: true
+  insecure: true
+
+entryPoints:
+  web:
+    address: ":80"
+  websecure:
+    address: ":443"
+
+providers:
+  docker:
+    exposedByDefault: false
+EOF
+    fi
+    
+    local traefik_service='
+  traefik:
+    image: traefik:v3.0
+    container_name: traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ../volumes/traefik/traefik.yml:/etc/traefik/traefik.yml
+      - traefik_data:/data
+    networks:
+      - rpi_network'
+    
+    sed -i '/^services:/a\'"$traefik_service" "$COMPOSE_FILE"
+    
+    if ! grep -q "traefik_data:" "$COMPOSE_FILE"; then
+        sed -i '/^volumes:/a\  traefik_data:' "$COMPOSE_FILE"
+    fi
+}
+
+add_traefik_config() {
+    local traefik_config="Service: Traefik Reverse Proxy & Load Balancer
+Image: traefik:v3.0
+Container Name: traefik
+Ports: 80 (HTTP), 443 (HTTPS), 8080 (Dashboard)
+Dashboard URL: http://localhost:8080
+Configuration File: $VOLUMES_DIR/traefik/traefik.yml
+Volume Path: $VOLUMES_DIR/traefik
+Backup Path: $VOLUMES_DIR/traefik
+Status: Image Available (not started)
+Notes: Manages routing for other services"
+    
+    add_service_config "Traefik" "$traefik_config"
+}
+
+add_grafana_to_compose() {
+    local grafana_service='
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ../volumes/grafana:/backup
+    networks:
+      - rpi_network
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123'
+    
+    sed -i '/^services:/a\'"$grafana_service" "$COMPOSE_FILE"
+    
+    if ! grep -q "grafana_data:" "$COMPOSE_FILE"; then
+        sed -i '/^volumes:/a\  grafana_data:' "$COMPOSE_FILE"
+    fi
+}
+
+add_grafana_config() {
+    local grafana_config="Service: Grafana Data Visualization & Monitoring
+Image: grafana/grafana:latest
+Container Name: grafana
+Port: 3000
+Web UI URL: http://localhost:3000
+Username: admin
+Password: admin123
+Volume Path: $VOLUMES_DIR/grafana
+Backup Path: $VOLUMES_DIR/grafana
+Status: Image Available (not started)
+Notes: Change default password on first login"
+    
+    add_service_config "Grafana" "$grafana_config"
+}
 
 # --- Docker Compose Management ---
 init_docker_compose() {
@@ -985,6 +1314,9 @@ install_all() {
 }
 
 # --- Main Loop ---
+# Initialize environment and detect existing images before starting menu
+detect_and_configure_existing_images
+
 while true; do
     show_menu
     read -p "Enter your choice [1-13, a, s, q]: " choice
