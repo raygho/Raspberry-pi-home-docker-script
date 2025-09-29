@@ -76,6 +76,10 @@ create_developer_structure() {
 # Create directory structure at script start
 create_developer_structure
 
+# Initialize docker-compose and config files immediately after directory creation
+init_docker_compose
+init_config_file
+
 # --- Docker Compose Management ---
 init_docker_compose() {
     if [ ! -f "$COMPOSE_FILE" ]; then
@@ -334,9 +338,6 @@ install_docker() {
         return 0
     fi
     
-    # Create developer structure first
-    create_developer_structure
-    
     echo -e "\n${GREEN}>>> Installing Docker...${NC}"
     echo -e "${YELLOW}>>> Downloading Docker installation script...${NC}"
     if ! curl -fsSL https://get.docker.com -o get-docker.sh; then
@@ -363,10 +364,6 @@ install_docker() {
     echo -e "${YELLOW}>>> Enabling and starting Docker service...${NC}"
     sudo systemctl enable docker
     sudo systemctl start docker
-    
-    # Initialize docker-compose file and config file
-    init_docker_compose
-    init_config_file
     
     rm get-docker.sh
     
